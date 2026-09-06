@@ -1,32 +1,66 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
+
+import {
+  getCurrentWindow,
+  LogicalSize
+} from '@tauri-apps/api/window'
+
+import {
+  invoke
+} from '@tauri-apps/api/core'
+
+
+const isTauri =
+  '__TAURI_INTERNALS__' in window
+
+const tauriWindow =
+  isTauri
+    ? getCurrentWindow()
+    : null
+
 
 const activeView = ref('notes')
 
+// Die native GTK-Oberfläche übernimmt unter Tauri
+// den kompletten Kompaktmodus.
+//
+// Deshalb startet die Vue-App IMMER vollständig.
+// Beim Programmstart ist dieses Fenster ohnehin versteckt.
 const compact = ref(false)
 const compactMenuOpen = ref(false)
+
 
 const quickNote = ref('')
 const compactQuickNote = ref('')
 
 const savedNotes = ref([])
 
+
 const sections = {
   notes: {
     title: 'Notizen',
-    description: 'Gedanken, Informationen und Dokumentationen festhalten.'
+    description:
+      'Gedanken, Informationen und Dokumentationen festhalten.'
   },
 
   tasks: {
     title: 'Aufgaben',
-    description: 'Eigene und gemeinsame pendente Aktivitäten verwalten.'
+    description:
+      'Eigene und gemeinsame pendente Aktivitäten verwalten.'
   },
 
   processes: {
     title: 'Prozesse',
-    description: 'Abläufe grafisch darstellen und dokumentieren.'
+    description:
+      'Abläufe grafisch darstellen und dokumentieren.'
   }
 }
+
+
+// =========================================================
+// NOTIZEN
+// =========================================================
 
 function createNote(text) {
   const cleanText = text.trim()
@@ -36,11 +70,13 @@ function createNote(text) {
   savedNotes.value.unshift({
     id: Date.now(),
     text: cleanText,
-    createdAt: new Date().toLocaleString('de-DE')
+    createdAt:
+      new Date().toLocaleString('de-DE')
   })
 
   return true
 }
+
 
 function saveQuickNote() {
   if (createNote(quickNote.value)) {
@@ -48,34 +84,177 @@ function saveQuickNote() {
   }
 }
 
+
 function saveCompactQuickNote() {
   if (createNote(compactQuickNote.value)) {
     compactQuickNote.value = ''
   }
 }
 
-function openCompactMode() {
+
+// =========================================================
+// MINUS NEBEN AB
+//
+// Tauri:
+// Vollständige Vue-App verstecken und den nativen
+// blauen Notesody-Launcher wieder anzeigen.
+//
+// Browser:
+// alter Kompaktmodus als Fallback.
+// =========================================================
+
+async function showNotebook() {
+  if (isTauri) {
+    try {
+      await invoke('show_launcher')
+    } catch (error) {
+      console.error(
+        'Kompaktmodus konnte nicht geöffnet werden:',
+        error
+      )
+    }
+
+    return
+  }
+
+  // Browser-Fallback
   compact.value = true
-  compactMenuOpen.value = false
+  compactMenuOpen.value = true
+
+  await nextTick()
 }
 
-function leaveCompactMode() {
+// =========================================================
+// SCHNELLMENÜ
+//
+// Wird nur noch als Browser-Fallback benötigt.
+// Der Desktop benutzt das native GTK-Schnellmenü.
+// =========================================================
+
+async function showQuickMenu() {
+
+  compact.value = true
+  compactMenuOpen.value = true
+
+  await nextTick()
+
+
+  if (!isTauri || !tauriWindow) {
+    return
+  }
+
+
+  await tauriWindow.setDecorations(false)
+  await tauriWindow.setAlwaysOnTop(true)
+
+  await tauriWindow.setMinSize(null)
+  await tauriWindow.setMaxSize(null)
+
+  await tauriWindow.setResizable(true)
+
+  await tauriWindow.setSize(
+    new LogicalSize(
+      370,
+      560
+    )
+  )
+
+  await tauriWindow.setResizable(false)
+
+  await tauriWindow.show()
+}
+
+
+// =========================================================
+// VOLLVERSION
+// =========================================================
+
+async function leaveCompactMode() {
+
   compact.value = false
   compactMenuOpen.value = false
+
+  await nextTick()
+
+
+  if (!isTauri || !tauriWindow) {
+    return
+  }
+
+
+  await tauriWindow.setAlwaysOnTop(false)
+
+  await tauriWindow.setResizable(true)
+
+  await tauriWindow.setDecorations(true)
+
+
+  await tauriWindow.setMinSize(
+    new LogicalSize(
+      900,
+      650
+    )
+  )
+
+  await tauriWindow.setMaxSize(null)
+
+
+  await tauriWindow.setSize(
+    new LogicalSize(
+      1150,
+      800
+    )
+  )
+
+
+  await tauriWindow.center()
 }
+
+
+// =========================================================
+// BROWSER-KOMPAKTMENÜ
+// =========================================================
+
+async function toggleCompactMenu() {
+
+  if (compactMenuOpen.value) {
+
+    compactMenuOpen.value = false
+
+  } else {
+
+    compact.value = true
+    compactMenuOpen.value = true
+  }
+}
+
+
+// =========================================================
+// NAVIGATION
+// =========================================================
 
 function openSection(section) {
+
   activeView.value = section
+
   compact.value = false
   compactMenuOpen.value = false
 }
 
-function newTask() {
-  openSection('tasks')
+
+async function newTask() {
+
+  activeView.value = 'tasks'
+
+  await leaveCompactMode()
 }
 
-function newProcess() {
-  openSection('processes')
+
+async function newProcess() {
+
+  activeView.value = 'processes'
+
+  await leaveCompactMode()
 }
 </script>
 
@@ -83,7 +262,11 @@ function newProcess() {
   <div class="app-shell" :class="{ compact }">
 
     <!-- ================================================= -->
-    <!-- KOMPAKTMODUS -->
+    <!-- BROWSER-KOMPAKTMODUS -->
+    <!--
+      Unter Tauri wird dieser Bereich nicht verwendet.
+      Dort übernimmt der native GTK-Launcher.
+    -->
     <!-- ================================================= -->
 
     <div
@@ -92,23 +275,6 @@ function newProcess() {
     >
       <div class="compact-wrapper">
 
-        <!-- kleines Notizbuch -->
-        <button
-          class="notebook-button"
-          title="Notesody Schnellmenü"
-          @click="compactMenuOpen = !compactMenuOpen"
-        >
-          <span class="book-spine"></span>
-
-          <span class="book-lines">
-            <span></span>
-            <span></span>
-            <span></span>
-          </span>
-        </button>
-
-
-        <!-- kleines Popup -->
         <div
           v-if="compactMenuOpen"
           class="compact-menu"
@@ -248,8 +414,8 @@ function newProcess() {
 
           <button
             class="icon-button"
-            title="Kompaktmodus"
-            @click="openCompactMode"
+            title="Zum Notizbuch minimieren"
+            @click="showNotebook"
           >
             ▭
           </button>

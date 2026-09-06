@@ -38,7 +38,7 @@ html,
 body,
 #app {
   width: 100%;
-  min-width: 320px;
+  min-width: 0px;
   min-height: 100%;
   margin: 0;
 }
@@ -1403,4 +1403,97 @@ button {
   .compact-menu {
     width: calc(100vw - 30px);
   }
+}
+/* ================================================= */
+/* TAURI DESKTOP – TRANSPARENTER KOMPAKTMODUS */
+/* ================================================= */
+
+html,
+body,
+#app {
+  background: transparent;
+}
+
+.app-shell.compact {
+  min-height: 100vh;
+  background: transparent;
+}
+
+.compact-workspace {
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: transparent;
+}
+
+.compact-wrapper {
+  position: relative;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  gap: 14px;
+}
+
+/* Die normale App bekommt weiterhin ihren Hintergrund */
+.app-shell:not(.compact) {
+  background: var(--background);
+}
+.book-spine.drag-handle {
+  width: 12px;
+  cursor: grab;
+  z-index: 5;
+}
+
+.book-spine.drag-handle:active {
+  cursor: grabbing;
+}
+/* ================================================= */
+/* NATIVER GTK-LAUNCHER + TAURI SCHNELLMENÜ */
+/* ================================================= */
+
+.app-shell.compact,
+.compact-workspace {
+  width: 100%;
+  height: 100%;
+
+  min-width: 0;
+  min-height: 0;
+
+  margin: 0;
+  padding: 0;
+
+  background: transparent;
+}
+
+.compact-workspace {
+  display: flex;
+
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.compact-wrapper {
+  width: 100%;
+  height: auto;
+
+  margin: 0;
+  padding: 8px;
+
+  display: block;
+}
+
+.compact-menu {
+  width: 100%;
+
+  max-width: none;
+
+  margin: 0;
 }
