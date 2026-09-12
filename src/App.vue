@@ -16,6 +16,9 @@ const compactMenuOpen = ref(false)
 const quickNote = ref('')
 const compactQuickNote = ref('')
 
+const sidebarWidth = ref(Number(localStorage.getItem('notesody-sidebar-width')) || 320)
+const resizingSidebar = ref(false)
+
 const authReady = ref(false)
 const session = ref(null)
 const loginEmail = ref('boehm.alex@gmx.de')
@@ -34,6 +37,28 @@ const editBusy = ref(false)
 const createBusy = ref(false)
 
 const rootNotes = computed(() => notes.value.filter(note => !note.parent_id))
+
+function startSidebarResize(event) {
+  if (window.innerWidth <= 800) return
+  resizingSidebar.value = true
+  event.preventDefault()
+  document.body.classList.add('sidebar-resizing')
+
+  const onMove = (moveEvent) => {
+    sidebarWidth.value = Math.min(520, Math.max(240, moveEvent.clientX))
+  }
+
+  const onUp = () => {
+    resizingSidebar.value = false
+    localStorage.setItem('notesody-sidebar-width', String(sidebarWidth.value))
+    document.body.classList.remove('sidebar-resizing')
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+  }
+
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
 
 const sections = {
   notes: { title: 'Notizen', description: 'Gedanken, Informationen und Dokumentationen festhalten.' },
@@ -309,7 +334,7 @@ onMounted(async () => {
         </div>
       </header>
 
-      <div class="workspace">
+      <div class="workspace" :style="{ '--sidebar-width': `${sidebarWidth}px` }">
         <aside class="sidebar">
           <nav class="main-nav accordion-nav">
             <div class="nav-accordion" :class="{ open: activeView === 'notes' }">
@@ -361,6 +386,7 @@ onMounted(async () => {
             <button class="nav-item muted"><span class="nav-icon">♙</span><span>Gruppen</span></button>
             <button class="nav-item muted" @click="logout"><span class="nav-icon">⇥</span><span>Abmelden</span></button>
           </div>
+          <div class="sidebar-resize-handle" title="Seitenleiste breiter oder schmaler ziehen" @pointerdown="startSidebarResize"></div>
         </aside>
 
         <main class="main-content" :class="{ 'notes-wide': activeView === 'notes' }">

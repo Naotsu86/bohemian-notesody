@@ -193,7 +193,7 @@ button {
 .workspace {
   display: grid;
 
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 320px) minmax(0, 1fr);
 
   min-height: calc(100vh - 72px);
 }
@@ -203,6 +203,8 @@ button {
 /* ------------------------------------------------ */
 
 .sidebar {
+  position: relative;
+  min-width: 0;
   padding: 18px 12px;
 
   display: flex;
@@ -212,6 +214,38 @@ button {
   background: #ffffff;
 
   border-right: 1px solid var(--border);
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  z-index: 10;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: transparent;
+  transition: background .15s ease;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resizing .sidebar-resize-handle::after {
+  background: #0284c7;
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .main-nav,
@@ -876,6 +910,8 @@ button {
 /* ------------------------------------------------ */
 
 @media (max-width: 800px) {
+  .sidebar-resize-handle { display: none; }
+
   .workspace {
     grid-template-columns: 70px minmax(0, 1fr);
   }
