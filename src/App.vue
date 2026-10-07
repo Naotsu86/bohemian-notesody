@@ -36,7 +36,14 @@ const editColor = ref('#0284c7')
 const editBusy = ref(false)
 const createBusy = ref(false)
 
-const rootNotes = computed(() => notes.value.filter(note => !note.parent_id))
+const rootNotes = computed(() => notes.value.filter(note => !note.parent_id).sort(sortNotes))
+
+function sortNotes(a, b) {
+  const ao = Number.isFinite(Number(a.sort_order)) ? Number(a.sort_order) : 999999
+  const bo = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 999999
+  if (ao !== bo) return ao - bo
+  return new Date(a.created_at) - new Date(b.created_at)
+}
 
 function startSidebarResize(event) {
   if (window.innerWidth <= 800) return
@@ -122,7 +129,7 @@ async function loadNotes(preferredId = selectedNote.value?.id) {
 
   const { data, error } = await supabase
     .from('items')
-    .select('id,title,content,color,created_at,updated_at,created_by,group_id,parent_id')
+    .select('id,title,content,color,created_at,updated_at,created_by,group_id,parent_id,sort_order')
     .eq('type', 'note')
     .eq('group_id', TEST_GROUP_ID)
     .order('created_at', { ascending: true })
@@ -157,7 +164,8 @@ async function saveQuickNote() {
       created_by: session.value.user.id,
       group_id: TEST_GROUP_ID,
       created_at: now,
-      updated_at: now
+      updated_at: now,
+      sort_order: nextSortOrder(null)
     })
     .select('id')
     .single()
@@ -201,7 +209,8 @@ async function createNote(parent = null) {
       created_by: session.value.user.id,
       group_id: TEST_GROUP_ID,
       created_at: now,
-      updated_at: now
+      updated_at: now,
+      sort_order: nextSortOrder(parent?.id ?? null)
     })
     .select('id')
     .single()
@@ -212,6 +221,81 @@ async function createNote(parent = null) {
     return
   }
   await loadNotes(data.id)
+}
+
+function nextSortOrder(parentId) {
+  const siblings = notes.value.filter(note => (note.parent_id ?? null) === (parentId ?? null))
+  if (!siblings.length) return 10
+  return Math.max(...siblings.map(note => Number(note.sort_order) || 0)) + 10
+}
+
+function descendantIds(noteId) {
+  const ids = [noteId]
+  for (const child of notes.value.filter(note => note.parent_id === noteId)) {
+    ids.push(...descendantIds(child.id))
+  }
+  return ids
+}
+
+async function deleteNote(note = selectedNote.value) {
+  if (!note) return
+  const descendants = descendantIds(note.id)
+  const childCount = descendants.length - 1
+  const message = childCount
+    ? `„${note.title || 'Ohne Titel'}“ und ${childCount} Unter${childCount === 1 ? 'notiz' : 'notizen'} wirklich löschen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden.`
+    : `„${note.title || 'Ohne Titel'}“ wirklich löschen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden.`
+  if (!window.confirm(message)) return
+
+  editBusy.value = true
+  noteError.value = ''
+  const { error } = await supabase.from('items').delete().in('id', descendants)
+  editBusy.value = false
+  if (error) {
+    noteError.value = error.message
+    return
+  }
+
+  if (selectedNote.value && descendants.includes(selectedNote.value.id)) {
+    selectedNote.value = null
+    editTitle.value = ''
+    editContent.value = ''
+  }
+  await loadNotes(null)
+}
+
+async function reorderNote({ draggedId, targetId, position }) {
+  if (!draggedId || !targetId || draggedId === targetId) return
+  const dragged = notes.value.find(note => note.id === draggedId)
+  const target = notes.value.find(note => note.id === targetId)
+  if (!dragged || !target) return
+
+  // Nur innerhalb derselben Ebene sortieren. So wird die Hierarchie nicht versehentlich verändert.
+  if ((dragged.parent_id ?? null) !== (target.parent_id ?? null)) return
+
+  const parentId = dragged.parent_id ?? null
+  const siblings = notes.value.filter(note => (note.parent_id ?? null) === parentId).sort(sortNotes)
+  const withoutDragged = siblings.filter(note => note.id !== draggedId)
+  const targetIndex = withoutDragged.findIndex(note => note.id === targetId)
+  if (targetIndex < 0) return
+  const insertIndex = position === 'after' ? targetIndex + 1 : targetIndex
+  withoutDragged.splice(insertIndex, 0, dragged)
+
+  // In 10er-Schritten speichern, damit die Reihenfolge eindeutig und gruppenweit gleich ist.
+  const updates = withoutDragged.map((note, index) => ({ id: note.id, sort_order: (index + 1) * 10 }))
+  notes.value = notes.value.map(note => {
+    const update = updates.find(item => item.id === note.id)
+    return update ? { ...note, sort_order: update.sort_order } : note
+  })
+
+  noteError.value = ''
+  for (const update of updates) {
+    const { error } = await supabase.from('items').update({ sort_order: update.sort_order }).eq('id', update.id)
+    if (error) {
+      noteError.value = error.message
+      await loadNotes(selectedNote.value?.id)
+      return
+    }
+  }
 }
 
 async function updateNote() {
@@ -359,6 +443,8 @@ onMounted(async () => {
                     :selected-id="selectedNote?.id"
                     @select="selectNote"
                     @add-child="createNote"
+                    @delete="deleteNote"
+                    @reorder="reorderNote"
                   />
                 </div>
               </div>
@@ -413,7 +499,10 @@ onMounted(async () => {
                       <input id="note-title" v-model="editTitle" class="note-title-input" type="text" placeholder="Titel der Notiz">
                       <span>Zuletzt geändert: {{ formatDate(selectedNote.updated_at || selectedNote.created_at) }}</span>
                     </div>
-                    <button class="secondary-button" type="button" @click="createNote(selectedNote)">+ Unternotiz</button>
+                    <div class="note-editor-actions">
+                      <button class="secondary-button" type="button" @click="createNote(selectedNote)">+ Unternotiz</button>
+                      <button class="danger-button" type="button" :disabled="editBusy" @click="deleteNote(selectedNote)">Löschen</button>
+                    </div>
                   </div>
 
                   <div v-if="!selectedNote.parent_id" class="note-color-row">
