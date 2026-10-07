@@ -425,12 +425,23 @@ async function loadTasks(preferredId = selectedTaskItem.value?.id) {
 }
 
 async function loadGroupProfiles() {
-  const { data: members, error } = await supabase.from('group_members').select('user_id').eq('group_id',TEST_GROUP_ID)
-  if (error) return
-  const ids=(members??[]).map(m=>m.user_id)
-  if (!ids.length) { groupProfiles.value=[]; return }
-  const { data } = await supabase.from('profiles').select('id,name,email').in('id',ids).order('name')
-  groupProfiles.value=data??[]
+  // Die Profile werden über eine SECURITY-DEFINER-Funktion geladen.
+  // Dadurch kann ein Gruppenmitglied die Profile der anderen Mitglieder
+  // derselben Gruppe sehen, ohne die profiles-RLS global zu öffnen.
+  const { data, error } = await supabase.rpc('get_group_profiles', {
+    p_group_id: TEST_GROUP_ID
+  })
+
+  if (error) {
+    console.error('Gruppenmitglieder konnten nicht geladen werden:', error)
+    taskError.value = `Gruppenmitglieder konnten nicht geladen werden: ${error.message}`
+    groupProfiles.value = []
+    return
+  }
+
+  groupProfiles.value = (data ?? []).sort((a, b) =>
+    (a.name || a.email || '').localeCompare(b.name || b.email || '', 'de')
+  )
 }
 
 function selectTask(item) {
