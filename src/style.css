@@ -2015,3 +2015,18 @@ button:disabled {
 }
 .danger-button:hover { background: #fff1f0; }
 .danger-button:disabled { opacity: .55; cursor: default; }
+
+/* Aufgaben */
+.task-tree-empty { padding: 7px 28px; color: #98a2b3; font-size: 12px; }
+.task-tree-node { padding-left: 28px !important; }
+.task-status-dot { width: 20px; flex: 0 0 20px; text-align: center; font-weight: 800; color: #667085; }
+.task-status-dot.in_progress { color: #d97706; }
+.task-status-dot.done { color: #059669; }
+.task-meta-grid { display:grid; grid-template-columns: 1.4fr 1fr 1fr; gap:12px; margin: 4px 0 16px; }
+.task-meta-grid label, .task-result-field { display:flex; flex-direction:column; gap:6px; color:#475467; font-size:12px; font-weight:700; }
+.task-meta-grid select, .task-meta-grid input, .task-result-field textarea { min-height:40px; border:1px solid var(--border); border-radius:9px; background:#fff; padding:8px 10px; font:inherit; color:#1d2939; }
+.task-result-field { margin-top:16px; }
+.task-result-field textarea { min-height:110px; resize:vertical; }
+.task-section-label { margin: 4px 0 8px; color:#475467; font-size:12px; font-weight:700; }
+.task-topic-editor > p { color:#667085; margin: 0 0 14px; }
+@media (max-width: 900px) { .task-meta-grid { grid-template-columns:1fr; } }

@@ -4,6 +4,7 @@ import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { supabase } from './supabase'
 import NoteTreeNode from './components/NoteTreeNode.vue'
+import TaskTreeNode from './components/TaskTreeNode.vue'
 import RichNoteEditor from './components/RichNoteEditor.vue'
 
 const isTauri = '__TAURI_INTERNALS__' in window
@@ -35,6 +36,22 @@ const editContent = ref('')
 const editColor = ref('#0284c7')
 const editBusy = ref(false)
 const createBusy = ref(false)
+
+const taskItems = ref([])
+const taskDetails = ref([])
+const groupProfiles = ref([])
+const selectedTaskItem = ref(null)
+const taskTitle = ref('')
+const taskContent = ref('')
+const taskAssignedTo = ref('')
+const taskDueAt = ref('')
+const taskStatus = ref('open')
+const taskResult = ref('')
+const taskBusy = ref(false)
+const taskError = ref('')
+const taskTopicColor = ref('#0284c7')
+const taskMap = computed(() => Object.fromEntries(taskDetails.value.map(t => [t.item_id, t])))
+const taskTopics = computed(() => taskItems.value.filter(item => !item.parent_id).sort(sortNotes))
 
 const rootNotes = computed(() => notes.value.filter(note => !note.parent_id).sort(sortNotes))
 
@@ -322,6 +339,113 @@ async function updateNote() {
   await loadNotes(selectedNote.value.id)
 }
 
+
+async function loadTasks(preferredId = selectedTaskItem.value?.id) {
+  if (!session.value?.user) return
+  taskBusy.value = true
+  taskError.value = ''
+  const { data: itemsData, error: itemsError } = await supabase.from('items')
+    .select('id,title,content,color,created_at,updated_at,created_by,group_id,parent_id,sort_order')
+    .eq('type','task').eq('group_id',TEST_GROUP_ID).order('created_at',{ascending:true})
+  if (itemsError) { taskError.value=itemsError.message; taskBusy.value=false; return }
+  taskItems.value = itemsData ?? []
+  const ids = taskItems.value.map(i=>i.id)
+  if (ids.length) {
+    const { data: details, error } = await supabase.from('tasks').select('item_id,assigned_to,status,due_at,result,completed_at,completed_by').in('item_id',ids)
+    if (error) taskError.value=error.message
+    else taskDetails.value=details ?? []
+  } else taskDetails.value=[]
+  await loadGroupProfiles()
+  taskBusy.value=false
+  if (preferredId) { const found=taskItems.value.find(i=>i.id===preferredId); if(found) selectTask(found) }
+}
+
+async function loadGroupProfiles() {
+  const { data: members, error } = await supabase.from('group_members').select('user_id').eq('group_id',TEST_GROUP_ID)
+  if (error) return
+  const ids=(members??[]).map(m=>m.user_id)
+  if (!ids.length) { groupProfiles.value=[]; return }
+  const { data } = await supabase.from('profiles').select('id,name,email').in('id',ids).order('name')
+  groupProfiles.value=data??[]
+}
+
+function selectTask(item) {
+  selectedTaskItem.value=item
+  const detail=taskMap.value[item.id] || {}
+  taskTitle.value=item.title||''
+  taskContent.value=item.content||'<p></p>'
+  taskAssignedTo.value=detail.assigned_to||''
+  taskDueAt.value=detail.due_at ? new Date(detail.due_at).toISOString().slice(0,10) : ''
+  taskStatus.value=detail.status||'open'
+  taskResult.value=detail.result||''
+  taskTopicColor.value=item.color||'#0284c7'
+}
+
+async function createTaskTopic() {
+  if (!session.value?.user) return
+  taskBusy.value=true; taskError.value=''
+  const now=new Date().toISOString()
+  const {data,error}=await supabase.from('items').insert({type:'task',parent_id:null,title:'Neues Hauptthema',content:'',color:'#0284c7',created_by:session.value.user.id,group_id:TEST_GROUP_ID,created_at:now,updated_at:now,sort_order:nextTaskSortOrder(null)}).select('id').single()
+  taskBusy.value=false
+  if(error){taskError.value=error.message;return}
+  await loadTasks(data.id)
+}
+
+async function createTask(topic) {
+  if (!session.value?.user || !topic) return
+  taskBusy.value=true; taskError.value=''
+  const now=new Date().toISOString()
+  const {data:item,error:itemError}=await supabase.from('items').insert({type:'task',parent_id:topic.id,title:'Neue Aufgabe',content:'<p></p>',color:null,created_by:session.value.user.id,group_id:TEST_GROUP_ID,created_at:now,updated_at:now,sort_order:nextTaskSortOrder(topic.id)}).select('id').single()
+  if(itemError){taskError.value=itemError.message;taskBusy.value=false;return}
+  const {error:taskInsertError}=await supabase.from('tasks').insert({item_id:item.id,assigned_to:null,status:'open',due_at:null,result:null,completed_at:null,completed_by:null})
+  taskBusy.value=false
+  if(taskInsertError){taskError.value=taskInsertError.message;await supabase.from('items').delete().eq('id',item.id);return}
+  await loadTasks(item.id)
+}
+
+function nextTaskSortOrder(parentId){const siblings=taskItems.value.filter(i=>(i.parent_id??null)===(parentId??null));return siblings.length?Math.max(...siblings.map(i=>Number(i.sort_order)||0))+10:10}
+
+async function saveTask() {
+  if(!selectedTaskItem.value) return
+  taskBusy.value=true; taskError.value=''
+  const now=new Date().toISOString()
+  const isTopic=!selectedTaskItem.value.parent_id
+  const {error:itemError}=await supabase.from('items').update({title:taskTitle.value.trim()||'Ohne Titel',content:isTopic?'':(taskContent.value||'<p></p>'),color:isTopic?taskTopicColor.value:null,updated_at:now}).eq('id',selectedTaskItem.value.id)
+  if(itemError){taskError.value=itemError.message;taskBusy.value=false;return}
+  if(!isTopic){
+    const done=taskStatus.value==='done'
+    const {error}=await supabase.from('tasks').update({assigned_to:taskAssignedTo.value||null,due_at:taskDueAt.value?new Date(taskDueAt.value+'T12:00:00').toISOString():null,status:taskStatus.value,result:taskResult.value||null,completed_at:done?now:null,completed_by:done?session.value.user.id:null}).eq('item_id',selectedTaskItem.value.id)
+    if(error){taskError.value=error.message;taskBusy.value=false;return}
+  }
+  taskBusy.value=false
+  await loadTasks(selectedTaskItem.value.id)
+}
+
+async function deleteTaskItem(item=selectedTaskItem.value){
+  if(!item)return
+  const children=taskItems.value.filter(i=>i.parent_id===item.id)
+  const msg=children.length?`„${item.title}“ und ${children.length} Aufgabe${children.length===1?'':'n'} wirklich löschen?`:`„${item.title}“ wirklich löschen?`
+  if(!window.confirm(msg))return
+  const ids=[item.id,...children.map(c=>c.id)]
+  taskBusy.value=true;taskError.value=''
+  const {error}=await supabase.from('items').delete().in('id',ids)
+  taskBusy.value=false
+  if(error){taskError.value=error.message;return}
+  if(selectedTaskItem.value&&ids.includes(selectedTaskItem.value.id))selectedTaskItem.value=null
+  await loadTasks(null)
+}
+
+async function reorderTaskTopic({draggedId,targetId,position}){
+  const dragged=taskItems.value.find(i=>i.id===draggedId),target=taskItems.value.find(i=>i.id===targetId)
+  if(!dragged||!target||(dragged.parent_id??null)!==(target.parent_id??null))return
+  const parentId=dragged.parent_id??null
+  const siblings=taskItems.value.filter(i=>(i.parent_id??null)===parentId).sort(sortNotes).filter(i=>i.id!==draggedId)
+  const idx=siblings.findIndex(i=>i.id===targetId);if(idx<0)return
+  siblings.splice(position==='after'?idx+1:idx,0,dragged)
+  for(let i=0;i<siblings.length;i++){const order=(i+1)*10;await supabase.from('items').update({sort_order:order}).eq('id',siblings[i].id)}
+  await loadTasks(selectedTaskItem.value?.id)
+}
+
 async function showNotebook() {
   if (isTauri) {
     try { await invoke('show_launcher') } catch (error) { console.error(error) }
@@ -346,8 +470,9 @@ async function leaveCompactMode() {
   await tauriWindow.center()
 }
 
-function openSection(section) {
+async function openSection(section) {
   activeView.value = section
+  if (section === 'tasks') await loadTasks()
   compact.value = false
   compactMenuOpen.value = false
 }
@@ -451,12 +576,17 @@ onMounted(async () => {
             </div>
 
             <div class="nav-accordion" :class="{ open: activeView === 'tasks' }">
-              <button class="nav-item accordion-trigger" :class="{ active: activeView === 'tasks' }" @click="openSection('tasks')">
-                <span class="accordion-chevron">{{ activeView === 'tasks' ? '⌄' : '›' }}</span>
-                <span class="nav-icon">✓</span>
-                <span>Aufgaben</span>
-              </button>
-              <div v-if="activeView === 'tasks'" class="accordion-body accordion-placeholder">Aufgabenübersicht folgt</div>
+              <div class="nav-accordion-head">
+                <button class="nav-item accordion-trigger" :class="{ active: activeView === 'tasks' }" @click="openSection('tasks')">
+                  <span class="accordion-chevron">{{ activeView === 'tasks' ? '⌄' : '›' }}</span><span class="nav-icon">✓</span><span>Aufgaben</span>
+                </button>
+                <button v-if="activeView === 'tasks'" class="accordion-add" type="button" title="Hauptthema anlegen" @click.stop="createTaskTopic">+</button>
+              </div>
+              <div v-if="activeView === 'tasks'" class="accordion-body note-tree-sidebar">
+                <div v-if="taskBusy" class="tree-empty sidebar-tree-empty">Aufgaben werden geladen …</div>
+                <div v-else-if="!taskTopics.length" class="tree-empty sidebar-tree-empty">Noch keine Hauptthemen.</div>
+                <TaskTreeNode v-for="topic in taskTopics" :key="topic.id" :topic="topic" :items="taskItems" :task-map="taskMap" :selected-id="selectedTaskItem?.id" @select="selectTask" @add-task="createTask" @delete="deleteTaskItem" @reorder="reorderTaskTopic" />
+              </div>
             </div>
 
             <div class="nav-accordion" :class="{ open: activeView === 'processes' }">
@@ -478,7 +608,7 @@ onMounted(async () => {
         <main class="main-content" :class="{ 'notes-wide': activeView === 'notes' }">
           <div class="page-heading">
             <div><h1>{{ sections[activeView].title }}</h1><p>{{ sections[activeView].description }}</p></div>
-            <button v-if="activeView !== 'notes'" class="primary-button">+ Neu</button>
+            <button v-if="activeView === 'processes'" class="primary-button">+ Neu</button>
           </div>
 
           <template v-if="activeView === 'notes'">
@@ -543,7 +673,32 @@ onMounted(async () => {
           </template>
 
           <template v-if="activeView === 'tasks'">
-            <section class="placeholder-card"><div class="placeholder-icon">✓</div><h2>Aufgaben & pendente Aktivitäten</h2><p>Hier entstehen später persönliche Aufgaben, Gruppenzuweisungen, Ergebnisse und Statusmeldungen.</p></section>
+            <p v-if="taskError" class="form-error">{{ taskError }}</p>
+            <section class="notes-workspace-card editor-only-workspace task-workspace-card">
+              <section class="note-editor-panel">
+                <div v-if="!selectedTaskItem" class="editor-welcome"><div class="editor-welcome-icon">✓</div><h2>Aufgabe auswählen</h2><p>Wähle links ein Hauptthema oder eine Aufgabe aus. Mit + legst du neue Hauptthemen bzw. Aufgaben an.</p></div>
+                <template v-else>
+                  <div class="note-editor-heading">
+                    <div class="note-editor-title-wrap"><label>Titel</label><input v-model="taskTitle" class="note-title-input" type="text" placeholder="Titel"></div>
+                    <div class="note-editor-actions"><button v-if="!selectedTaskItem.parent_id" class="secondary-button" type="button" @click="createTask(selectedTaskItem)">+ Aufgabe</button><button class="danger-button" type="button" @click="deleteTaskItem(selectedTaskItem)">Löschen</button></div>
+                  </div>
+                  <div v-if="!selectedTaskItem.parent_id" class="task-topic-editor">
+                    <p>Dieses Element ist ein Hauptthema und selbst keine Aufgabe.</p>
+                    <div class="note-color-row"><span>Farbe des Hauptthemas</span><div class="note-color-palette"><button v-for="color in ['#0284c7','#f59e0b','#dc2626','#111827','#94a3b8','#93c5fd','#fde68a','#059669','#4b5563']" :key="color" type="button" class="note-color-dot" :class="{selected:taskTopicColor===color}" :style="{backgroundColor:color}" @click="taskTopicColor=color"></button></div></div>
+                  </div>
+                  <template v-else>
+                    <div class="task-meta-grid">
+                      <label>Zugewiesen an<select v-model="taskAssignedTo"><option value="">Noch niemand</option><option v-for="profile in groupProfiles" :key="profile.id" :value="profile.id">{{ profile.name || profile.email }}</option></select></label>
+                      <label>Fällig am<input v-model="taskDueAt" type="date"></label>
+                      <label>Status<select v-model="taskStatus"><option value="open">Offen</option><option value="in_progress">In Bearbeitung</option><option value="done">Erledigt</option></select></label>
+                    </div>
+                    <div class="task-section-label">Aufgabenbeschreibung</div><RichNoteEditor v-model="taskContent" />
+                    <label class="task-result-field">Ergebnis<textarea v-model="taskResult" placeholder="Ergebnis oder Rückmeldung zur Aufgabe …"></textarea></label>
+                  </template>
+                  <div class="note-save-row"><span class="save-hint">Alle Mitglieder der Gruppe sehen denselben aktuellen Stand.</span><button class="primary-button" type="button" :disabled="taskBusy" @click="saveTask">{{ taskBusy ? 'Speichern …' : 'Änderungen speichern' }}</button></div>
+                </template>
+              </section>
+            </section>
           </template>
 
           <template v-if="activeView === 'processes'">
