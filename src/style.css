@@ -2030,3 +2030,25 @@ button:disabled {
 .task-section-label { margin: 4px 0 8px; color:#475467; font-size:12px; font-weight:700; }
 .task-topic-editor > p { color:#667085; margin: 0 0 14px; }
 @media (max-width: 900px) { .task-meta-grid { grid-template-columns:1fr; } }
+
+/* ======================================================== */
+/* PROFILE / ACCOUNT                                        */
+/* ======================================================== */
+.auth-switch {
+  border: 0;
+  background: transparent;
+  color: #0277b5;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.profile-modal { width: min(560px, 100%); }
+.profile-modal > label { display: flex; flex-direction: column; gap: 7px; font-weight: 700; color: #344054; }
+.profile-modal > label input { width: 100%; border: 1px solid var(--border); border-radius: 9px; padding: 11px 12px; background: #fff; color: #101828; }
+.profile-modal > label input:disabled { background: #f2f4f7; color: #667085; }
+.profile-modal > label small { font-weight: 400; color: var(--muted); line-height: 1.4; }
+.profile-avatar { width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center; background: #e0f2fe; color: #0369a1; font-size: 20px; font-weight: 800; }
+.profile-groups { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.profile-group-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: #f8fafc; }
+.profile-group-row small, .profile-empty { color: var(--muted); }
+.form-success { margin: 0; color: #047857; font-weight: 700; }

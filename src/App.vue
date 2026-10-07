@@ -26,6 +26,15 @@ const loginEmail = ref('boehm.alex@gmx.de')
 const loginPassword = ref('')
 const loginError = ref('')
 const authBusy = ref(false)
+const authMode = ref('login')
+const signupName = ref('')
+const profileOpen = ref(false)
+const profileBusy = ref(false)
+const profileError = ref('')
+const profileMessage = ref('')
+const profileName = ref('')
+const profileEmail = ref('')
+const myGroups = ref([])
 
 const notesBusy = ref(false)
 const noteError = ref('')
@@ -130,6 +139,61 @@ async function login() {
   session.value = data.session
   loginPassword.value = ''
   await loadNotes()
+}
+
+async function signup() {
+  loginError.value = ''
+  authBusy.value = true
+  const email = loginEmail.value.trim()
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password: loginPassword.value,
+    options: { data: { name: signupName.value.trim() } }
+  })
+  authBusy.value = false
+  if (error) { loginError.value = error.message; return }
+  if (data.user) {
+    await supabase.from('profiles').upsert({ id: data.user.id, name: signupName.value.trim() || email, email }, { onConflict: 'id' })
+  }
+  if (data.session) { session.value = data.session; await loadNotes() }
+  else { loginError.value = 'Registrierung angelegt. Bitte bestätige ggf. die E-Mail und melde dich anschließend an.'; authMode.value = 'login' }
+}
+
+const profileInitials = computed(() => {
+  const source = profileName.value || session.value?.user?.email || 'BN'
+  const parts = source.trim().split(/\s+/).filter(Boolean)
+  return (parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : source.slice(0, 2)).toUpperCase()
+})
+
+async function loadMyProfile() {
+  if (!session.value?.user) return
+  profileError.value = ''; profileMessage.value = ''
+  const uid = session.value.user.id
+  const { data: profile, error } = await supabase.from('profiles').select('id,name,email').eq('id', uid).maybeSingle()
+  if (error) profileError.value = error.message
+  profileName.value = profile?.name || session.value.user.user_metadata?.name || ''
+  profileEmail.value = profile?.email || session.value.user.email || ''
+  const { data: memberships, error: memberError } = await supabase.from('group_members').select('group_id,role').eq('user_id', uid)
+  if (memberError) { profileError.value = memberError.message; myGroups.value = []; return }
+  const ids = (memberships || []).map(m => m.group_id)
+  if (!ids.length) { myGroups.value = []; return }
+  const { data: groups } = await supabase.from('groups').select('id,name').in('id', ids)
+  myGroups.value = (memberships || []).map(m => ({ ...m, name: (groups || []).find(g => g.id === m.group_id)?.name || 'Gruppe' }))
+}
+
+async function openProfile() { profileOpen.value = true; await loadMyProfile() }
+
+async function saveProfile() {
+  if (!session.value?.user) return
+  profileBusy.value = true; profileError.value = ''; profileMessage.value = ''
+  const { error } = await supabase.from('profiles').upsert({
+    id: session.value.user.id, name: profileName.value.trim(), email: session.value.user.email
+  }, { onConflict: 'id' })
+  profileBusy.value = false
+  if (error) { profileError.value = error.message; return }
+  profileEmail.value = session.value.user.email || profileEmail.value
+  profileMessage.value = 'Profil gespeichert.'
+  await loadGroupProfiles()
 }
 
 async function logout() {
@@ -484,11 +548,11 @@ onMounted(async () => {
   const { data } = await supabase.auth.getSession()
   session.value = data.session
   authReady.value = true
-  if (session.value?.user) await loadNotes()
+  if (session.value?.user) { await loadNotes(); await loadMyProfile() }
 
   supabase.auth.onAuthStateChange(async (_event, nextSession) => {
     session.value = nextSession
-    if (nextSession?.user) await loadNotes()
+    if (nextSession?.user) { await loadNotes(); await loadMyProfile() }
     else notes.value = []
   })
 })
@@ -500,15 +564,17 @@ onMounted(async () => {
   </div>
 
   <div v-else-if="!session" class="auth-screen">
-    <form class="auth-card" @submit.prevent="login">
+    <form class="auth-card" @submit.prevent="authMode === 'login' ? login() : signup()">
       <div class="brand auth-brand">
         <div class="brand-icon"><span class="brand-spine"></span><span class="brand-line"></span><span class="brand-line"></span></div>
-        <div><div class="brand-name">Bohemian Notesody</div><div class="brand-subtitle">Anmelden</div></div>
+        <div><div class="brand-name">Bohemian Notesody</div><div class="brand-subtitle">{{ authMode === 'login' ? 'Anmelden' : 'Konto erstellen' }}</div></div>
       </div>
+      <label v-if="authMode === 'signup'">Name<input v-model="signupName" type="text" autocomplete="name" required></label>
       <label>E-Mail<input v-model="loginEmail" type="email" autocomplete="username" required></label>
       <label>Passwort<input v-model="loginPassword" type="password" autocomplete="current-password" required></label>
       <p v-if="loginError" class="form-error">{{ loginError }}</p>
-      <button class="primary-button" type="submit" :disabled="authBusy">{{ authBusy ? 'Anmelden …' : 'Anmelden' }}</button>
+      <button class="primary-button" type="submit" :disabled="authBusy">{{ authBusy ? 'Bitte warten …' : (authMode === 'login' ? 'Anmelden' : 'Registrieren') }}</button>
+      <button class="auth-switch" type="button" @click="authMode = authMode === 'login' ? 'signup' : 'login'; loginError = ''">{{ authMode === 'login' ? 'Noch kein Konto? Registrieren' : 'Schon ein Konto? Anmelden' }}</button>
     </form>
   </div>
 
@@ -539,7 +605,7 @@ onMounted(async () => {
         </div>
         <div class="topbar-actions">
           <button class="icon-button" title="Zum Notizbuch minimieren" @click="showNotebook">▭</button>
-          <button class="user-button" title="Profil (Dashboard folgt)">AB</button>
+          <button class="user-button" title="Mein Profil" @click="openProfile">{{ profileInitials }}</button>
         </div>
       </header>
 
@@ -707,5 +773,16 @@ onMounted(async () => {
         </main>
       </div>
     </template>
+    <div v-if="profileOpen" class="modal-backdrop" @click.self="profileOpen = false">
+      <section class="note-editor-modal profile-modal">
+        <div class="modal-header"><div><h2>Mein Profil</h2><span>Benutzerkonto und Gruppen</span></div><button class="icon-button" type="button" @click="profileOpen = false">×</button></div>
+        <div class="profile-avatar">{{ profileInitials }}</div>
+        <label>Name<input v-model="profileName" type="text" placeholder="Dein Name"></label>
+        <label>E-Mail<input v-model="profileEmail" type="email" disabled><small>Diese Adresse gehört zu deinem Supabase-Login und wird später für Aufgabenzuweisungen verwendet.</small></label>
+        <div class="profile-groups"><strong>Meine Gruppen</strong><div v-if="!myGroups.length" class="profile-empty">Noch keiner Gruppe zugeordnet.</div><div v-for="group in myGroups" :key="group.group_id" class="profile-group-row"><span>{{ group.name }}</span><small>{{ group.role || 'Mitglied' }}</small></div></div>
+        <p v-if="profileError" class="form-error">{{ profileError }}</p><p v-if="profileMessage" class="form-success">{{ profileMessage }}</p>
+        <div class="modal-actions"><button class="secondary-button" type="button" @click="profileOpen = false">Schließen</button><button class="primary-button" type="button" :disabled="profileBusy" @click="saveProfile">{{ profileBusy ? 'Speichern …' : 'Profil speichern' }}</button></div>
+      </section>
+    </div>
   </div>
 </template>
